@@ -57,6 +57,38 @@ func (c *Client) assureClient() {
 	}
 }
 
+func (c *Client) Search(search string, maxResults int) (*SearchReslts, error) {
+	return c.SearchContext(context.Background(), search, maxResults)
+}
+
+func (c *Client) SearchContext(ctx context.Context, search string, maxResults int) (*SearchReslts, error) {
+	c.assureClient()
+
+	if search == "" {
+		return nil, errors.New("searchQuery is empty")
+	}
+	searchQuery := url.QueryEscape(search)
+
+	data := innertubeRequest{
+		Context: inntertubeContext{
+			Client: innertubeClient{
+				HL:            "en",
+				GL:            "US",
+				TimeZone:      "UTC",
+				ClientName:    "WEB",
+				ClientVersion: "2.20200720.00.02",
+			},
+		},
+	}
+
+	endpoint := fmt.Sprintf("https://www.youtube.com/youtubei/v1/search?key=%s&query=%s&contentCheckOk=True&racyCheckOk=True", c.client.key, searchQuery)
+	body, err := c.httpPostBodyBytes(ctx, endpoint, data)
+	if err != nil {
+		return nil, err
+	}
+	return NewSearchResults(search, maxResults, c, body)
+}
+
 // GetVideo fetches video metadata
 func (c *Client) GetVideo(url string) (*Video, error) {
 	return c.GetVideoContext(context.Background(), url)
@@ -134,7 +166,7 @@ type innertubeRequest struct {
 	PlaybackContext *playbackContext  `json:"playbackContext,omitempty"`
 	ContentCheckOK  bool              `json:"contentCheckOk,omitempty"`
 	RacyCheckOk     bool              `json:"racyCheckOk,omitempty"`
-	Params          string            `json:"params"`
+	Params          string            `json:"params,omitempty"`
 }
 
 type playbackContext struct {
