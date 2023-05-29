@@ -57,11 +57,11 @@ func (c *Client) assureClient() {
 	}
 }
 
-func (c *Client) Search(search string, maxResults int) (*SearchResults, error) {
-	return c.SearchContext(context.Background(), search, maxResults)
+func (c *Client) Search(search string) (*SearchResults, error) {
+	return c.SearchContext(context.Background(), search)
 }
 
-func (c *Client) SearchContext(ctx context.Context, search string, maxResults int) (*SearchResults, error) {
+func (c *Client) SearchContext(ctx context.Context, search string) (*SearchResults, error) {
 	c.assureClient()
 
 	if search == "" {
@@ -86,7 +86,7 @@ func (c *Client) SearchContext(ctx context.Context, search string, maxResults in
 	if err != nil {
 		return nil, err
 	}
-	return NewSearchResults(search, maxResults, body)
+	return NewSearchResults(search, body)
 }
 
 // GetVideo fetches video metadata

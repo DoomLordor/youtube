@@ -8,9 +8,8 @@ import (
 )
 
 type SearchResults struct {
-	Query      string
-	maxResults int
-	Videos     []*ResultVideo
+	Query  string
+	Videos []*ResultVideo
 }
 
 type ResultVideo struct {
@@ -20,23 +19,24 @@ type ResultVideo struct {
 	Duration time.Duration
 }
 
-func NewSearchResults(query string, maxResults int, body []byte) (*SearchResults, error) {
+func NewSearchResults(query string, body []byte) (*SearchResults, error) {
 	res := &SearchResults{
-		Query:      query,
-		maxResults: maxResults,
+		Query: query,
 	}
 	err := res.parseSearchResultsInfo(body)
 	return res, err
 }
 
 func (s *SearchResults) parseSearchResultsInfo(body []byte) error {
-	videos := make([]*ResultVideo, 0, s.maxResults)
+
 	j, err := sjson.NewJson(body)
 	if err != nil {
 		return err
 	}
 	j = j.GetPath("contents", "twoColumnSearchResultsRenderer", "primaryContents", "sectionListRenderer", "contents")
 	videosData := j.GetIndex(0).GetPath("itemSectionRenderer", "contents")
+	videos := make([]*ResultVideo, 0, len(videosData.MustArray()))
+
 	for i := range videosData.MustArray() {
 		videoData, ok := videosData.GetIndex(i).CheckGet("videoRenderer")
 		if !ok {
@@ -54,9 +54,6 @@ func (s *SearchResults) parseSearchResultsInfo(body []byte) error {
 			Duration: duration,
 		}
 		videos = append(videos, resultVideo)
-		if len(videos) == s.maxResults {
-			break
-		}
 	}
 	s.Videos = videos
 	return nil
