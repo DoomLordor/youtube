@@ -1,6 +1,7 @@
 package youtube
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,8 +12,10 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"sync"
+	"time"
 )
 
 const (
@@ -27,6 +30,133 @@ var (
 
 // DefaultClient type to use. No reason to change but you could if you wanted to.
 var DefaultClient = AndroidClient
+
+type TokenResponse struct {
+	AccessToken string `json:"access_token"`
+	Expires     int64  `json:"expires_in"`
+}
+
+type FetchResponse struct {
+	VerificationUrl string `json:"verification_url"`
+	UserCode        string `json:"user_code"`
+	DeviceCode      string `json:"device_code"`
+}
+
+type Storage interface {
+	GetToken() *Token
+	SaveToken(*Token)
+}
+
+type Token struct {
+	Access  string
+	Refresh string
+	Expires int64
+	Storage Storage
+}
+
+func (t *Token) GetAccess(ctx context.Context, client *Client, force bool) (string, error) {
+	if t.Storage == nil {
+		return "", nil
+	}
+
+	now := time.Now().Unix()
+	if t.Expires > now && !force {
+		return t.Access, nil
+	}
+
+	var err error
+
+	now -= 30
+
+	if t.Refresh != "" {
+		err = t.refresh(ctx, now, client)
+	} else {
+		err = t.fetch(ctx, now, client)
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	return t.Access, nil
+}
+
+func (t *Token) fetch(ctx context.Context, now int64, client *Client) error {
+	data := map[string]string{
+		"client_id": "861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com",
+		"scope":     "https://www.googleapis.com/auth/youtube",
+	}
+	resp, err := client.httpPost(ctx, "https://oauth2.googleapis.com/device/code", data)
+	if err != nil {
+		return err
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if err != nil {
+		return err
+	}
+
+	var fetch FetchResponse
+	err = json.Unmarshal(body, &fetch)
+
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Please open %s and input code %s", fetch.VerificationUrl, fetch.UserCode)
+
+	reader := bufio.NewReader(os.Stdin)
+	reader.ReadString('\n')
+
+	data = map[string]string{
+		"client_id":     "861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com",
+		"client_secret": "SboVhoG9s0rNafixCSGGKXAT",
+		"device_code":   fetch.DeviceCode,
+		"grant_type":    "urn:ietf:params:oauth:grant-type:device_code",
+	}
+
+	return t.send(ctx, now, client, data)
+}
+
+func (t *Token) send(ctx context.Context, now int64, client *Client, data map[string]string) error {
+	resp, err := client.httpPost(ctx, "https://oauth2.googleapis.com/token", data)
+	if err != nil {
+		return err
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if err != nil {
+		return err
+	}
+	var token TokenResponse
+	err = json.Unmarshal(body, &token)
+
+	if err != nil {
+		return err
+	}
+
+	t.Expires = now + token.Expires
+	t.Access = token.AccessToken
+	t.Storage.SaveToken(t)
+
+	return nil
+}
+
+func (t *Token) refresh(ctx context.Context, now int64, client *Client) error {
+
+	data := map[string]string{
+		"client_id":     "861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com",
+		"client_secret": "SboVhoG9s0rNafixCSGGKXAT",
+		"grant_type":    "refresh_token",
+		"refresh_token": t.Refresh,
+	}
+
+	return t.send(ctx, now, client, data)
+}
 
 // Client offers methods to download video metadata and video streams.
 type Client struct {
@@ -49,6 +179,8 @@ type Client struct {
 	client *clientInfo
 
 	consentID string
+
+	Storage Storage
 }
 
 func (c *Client) assureClient() {
@@ -243,8 +375,26 @@ func (c *Client) videoDataByInnertube(ctx context.Context, id string) ([]byte, e
 			},
 		},
 	}
+	urlPlayer := "https://www.youtube.com/youtubei/v1/player"
 
-	return c.httpPostBodyBytes(ctx, "https://www.youtube.com/youtubei/v1/player?key="+c.client.key, data)
+	token := ""
+
+	if c.Storage != nil {
+		var err error
+
+		token, err = c.Storage.GetToken().GetAccess(ctx, c, false)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if token != "" {
+		ctx = context.WithValue(ctx, "token", token)
+	} else {
+		urlPlayer += "?key=" + c.client.key
+	}
+
+	return c.httpPostBodyBytes(ctx, urlPlayer, data)
 }
 
 func (c *Client) transcriptDataByInnertube(ctx context.Context, id string) ([]byte, error) {
@@ -612,6 +762,11 @@ func (c *Client) httpPost(ctx context.Context, url string, body interface{}) (*h
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return nil, err
+	}
+
+	token := ctx.Value("token")
+	if t, ok := token.(string); ok {
+		req.Header.Set("Authorization", "Bearer "+t)
 	}
 
 	req.Header.Set("X-Youtube-Client-Name", "3")
