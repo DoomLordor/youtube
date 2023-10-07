@@ -68,6 +68,8 @@ func (t *Token) GetAccess(ctx context.Context, client *Client, force bool) (stri
 
 	now -= 30
 
+	client.assureClient()
+
 	if t.Refresh != "" {
 		err = t.refresh(ctx, now, client)
 	} else {
